@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 2 e2e testing complete. All 18 backend pytest cases pass (CRUD, validation incl. whitespace-only rejection + strip-and-store, reactions allow/deny + 404, SSE Content-Type + hello event). All frontend critical flows pass: TTS toggle defaults to 'TTS Off', persists across reload via sessionStorage key 'td_tts', archive reaction buttons increment counts 1→2 within ~2s via polling, externally posted message appears in display within ~6s confirming live updates work, Submit page accepts valid messages with toast + cooldown bar, and rejects profanity inline.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "pytest.ini", "issue": "addopts forces -n 2 --dist loadscope, but tests share one backend/DB and the autouse cleanup fixture (DELETE /api/messages before+after each test) causes cross-worker races (4 spurious failures observed). Either set scope=session, isolate via test-data prefixes + targeted deletes, or change addopts to -n 0 for shared-state suites. Workaround: run with `pytest -n 0`."},
+      {"endpoint": "/api/messages (GET)", "issue": "Sort key 'timestamp' stored as ISO-8601 string. Sorts correctly today but native BSON Date would be safer (carry-over note from iteration 1)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_messages.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Update /app/backend/pytest.ini to either run serially (-n 0) or isolate tests so the shared backend/DB autouse cleanup doesn't race across xdist workers. Current suite must be run with `pytest -n 0` for green output."
+  ],
+  "critical_code_review_comments": [
+    "server.py: model_validator(mode='before') strips whitespace before model_validator(mode='after') length checks — correct fix for the iteration-1 gap. Whitespace-only inputs now correctly produce 422.",
+    "server.py react_to_message: uses MongoDB $inc on reactions.{emoji} with find_one_and_update + projection excluding _id and return_document=True (post-update) — clean, atomic, and returns the new state. Good.",
+    "server.py SSE: emits Content-Type text/event-stream with X-Accel-Buffering: no and Cache-Control: no-cache,no-transform; sends initial 'event: hello' immediately and 15s keep-alives. Verified end-to-end.",
+    "useLiveMessages.js: EventSource subscribes to 3 events with a 120ms debounced refetch, polling fallback on error, and clears polling when SSE reconnects. Solid pattern.",
+    "Display.jsx: TTS state initialized from sessionStorage 'td_tts' and persisted on every change; default false on missing key — matches spec. stopSpeaking() called on toggle-off, reset, and logout.",
+    "Display.jsx ReactionBar: renders all 8 REACTION_EMOJIS with data-testid='react-{id}-{emoji}' and conditional count badge data-testid='react-count-{id}-{emoji}' — fully aligned with the spec.",
+    "Submit.jsx uses useLiveMessages(5000) only for the counter; this opens an additional EventSource connection per Submit page load. Acceptable, but consider lifting to a context if other pages/components subscribe in the future.",
+    "Submit.jsx useEffect dependency '[cooldown > 0]' (boolean expression) still present — linter-unfriendly carry-over from iteration 1."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_messages.py (extended for iteration 2: whitespace-strip-and-store, whitespace-only rejection, reactions allow/deny/404 increment, SSE Content-Type + hello event)"
+  ],
+  "success_rate": {"backend": "100% (18/18 serial)", "frontend": "100%"},
+  "test_credentials": "Display login email=xnytxs@gmail.com password=h6h6h678 (from /app/memory/test_credentials.md) — verified working.",
+  "seed_data_creation": "Backend tests purge /api/messages before+after each test. Frontend tests purge before login, seed 3 messages (Alice/Bob/Carol), exercise reactions, post a live-injected message, and purge at end.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run backend pytest with `pytest -n 0` (xdist races on shared DB). Public URL https://cinema-donate-queue.preview.emergentagent.com. Display login xnytxs@gmail.com / h6h6h678 (sessionStorage display_auth=true). Hero rotation 6s, polling fallback 3s. Allowed emojis: 🔥 ❤️ ✨ 🎉 🤯 👏 💜 🚀. Reaction button testid pattern react-{id}-{emoji}, count badge react-count-{id}-{emoji}. SSE hello arrives immediately via the preview proxy; full event delivery also confirmed (new external POST visible in UI within ~6s).",
+  "rca of the issue": "N/A — no blocking issues. Minor: pytest-xdist parallel mode (forced by pytest.ini) races against shared backend autouse cleanup → 4 false failures; running with `-n 0` makes all 18 tests pass deterministically in ~4s."
+}

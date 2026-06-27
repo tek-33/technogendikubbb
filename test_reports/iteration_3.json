@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 3 end-to-end testing complete. All 10 new backend pytest cases pass (native BSON Date storage, ISO-string JSON serialization, ascending sort, today-count with datetime, startup migration of legacy ISO strings to BSON Date via supervisorctl restart, plus iteration-2 regressions), and all 18 iteration-2 tests still pass. Frontend verified: login (xnytxs@gmail.com / h6h6h678) works; TTS defaults OFF and persists in sessionStorage 'td_tts'; leaderboard panel (data-testid='leaderboard-panel') renders with up to 3 ranked items, correct ordering by total reactions, all required testids present (leaderboard-item-N, leaderboard-rank-N, leaderboard-nick-N, leaderboard-count-N); leaderboard is conditional and hidden when 0 messages have reactions; reaction click triggers real-time leaderboard re-rank within ~3s via shared SSE (Bob overtook Alice 5→3); Submit page valid submit shows toast + 10s cooldown bar, profanity rejected inline, counter increments from shared context (Today 3); LiveMessagesProvider keeps a single open EventSource across client-side route changes between / and /display.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3.py",
+    "/app/backend/tests/test_messages.py",
+    "/app/test_reports/pytest/iteration3_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py Message.timestamp is now datetime; doc=msg.model_dump() inserts the native datetime so MongoDB stores it as BSON Date — verified with pymongo (type is datetime.datetime).",
+    "server.py /api/messages GET re-attaches tzinfo on naïve datetimes from Mongo via _ensure_aware before returning; pydantic serializes to ISO-8601 — confirmed string in JSON.",
+    "server.py /api/messages/count today now uses datetime comparison ($gte today_start UTC) — correct for BSON Date.",
+    "server.py @app.on_event('startup') migrate_string_timestamps() correctly converts type:'string' docs to native datetime; verified end-to-end by inserting a legacy '2026-06-27T05:00:00+00:00' doc, restarting backend, and asserting type became datetime.datetime with value preserved.",
+    "LiveMessagesContext.jsx: single Provider in App.js wraps BrowserRouter, so all routes share one EventSource; Submit.jsx now reads only `count` from useLiveMessages() (no separate stream), confirmed across client-side nav / ↔ /display the open EventSource count stays at 1 (the second instance shown in dev is React.StrictMode double-mount and is in readyState=2 CLOSED). In production builds (no StrictMode double-invoke) only 1 ES is ever created.",
+    "Leaderboard.jsx: correctly filters messages by start-of-today (local midnight via Date.setHours(0,0,0,0)), filters _total > 0, sorts desc, slices top 3, and returns null when empty — verified conditional render path.",
+    "Display.jsx: <Leaderboard /> rendered above the Archive header inside the archive container as specified.",
+    "pytest.ini is unchanged; iteration-3 file run with -n 0 to avoid the known xdist races against shared DB cleanup. Successful end-to-end with the startup-restart test in the same run."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3.py (new) — 10 tests for BSON Date, ISO JSON, sort, today count, startup migration via supervisorctl restart, and iteration-2 regression coverage."
+  ],
+  "success_rate": {"backend": "100% (10/10 iteration-3 + 18/18 iteration-2 regression)", "frontend": "100%"},
+  "test_credentials": "Display login email=xnytxs@gmail.com password=h6h6h678 — verified working.",
+  "seed_data_creation": "Backend tests purge /api/messages before+after each test and seed only TEST_-prefixed data. Frontend tests purge before scenarios, seed Alice/Bob/Carol for leaderboard ordering, then purge at end.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run backend pytest with `pytest -n 0` (xdist races on shared DB carry over from iteration 2). The startup-migration test calls `sudo supervisorctl restart backend` and waits up to ~25s for /api/ to come back; do not run it alongside other suites under xdist. Public URL https://cinema-donate-queue.preview.emergentagent.com. Allowed emojis: 🔥 ❤️ ✨ 🎉 🤯 👏 💜 🚀. Leaderboard testids: leaderboard-panel, leaderboard-item-{i}, leaderboard-rank-{i}, leaderboard-nick-{i}, leaderboard-count-{i} (i=0..2). React.StrictMode is enabled in index.js → EventSource is instantiated twice per page load in dev; the first is closed (readyState=2) and only the second remains open (readyState=1). This is expected and not a leak.",
+  "rca of the issue": "N/A — no blocking issues found."
+}

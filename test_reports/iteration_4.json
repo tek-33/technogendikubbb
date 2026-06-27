@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 4 testing complete. CSV export (3 tests) + 28 regression tests (iter 1/2/3) all PASS. Frontend hover popup (with reactions + zero-reactions branch), Export CSV button (<a>, href, target=_blank), theme persistence across pages and toggle directions, reset cancel flow, and logout all verified end-to-end. CRITICAL BUG: the 30/60s per-IP reaction rate limit does NOT trigger through the Kubernetes ingress because requests arrive from multiple ingress pod source IPs (observed 10.208.128.2 and 10.208.128.6 interleaved), so request.client.host yields a different key per request and no single deque ever crosses 30. 2 backend rate-limit tests fail because the feature is effectively defeated. Fix requires honoring X-Forwarded-For (first hop) in _check_rate_limit instead of (or in addition to) request.client.host.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/messages/{id}/react",
+        "issue": "Per-IP rate limit (30/60s) does not enforce. request.client.host returns the immediate K8s ingress peer, which alternates between at least 2 ingress pod IPs (e.g. 10.208.128.2 and 10.208.128.6 seen in backend.out.log), causing the in-memory _react_hits deque to be split across keys. 31 rapid reactions all returned 200 (final reactions['🔥']=31). 429 never triggered, Retry-After never set, real abusers from a single browser tab can bypass the limit. RCA verified by tail of /var/log/supervisor/backend.out.log. Mitigation: parse X-Forwarded-For header (request.headers.get('x-forwarded-for', '').split(',')[0].strip()) and fall back to request.client.host only when XFF is absent.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/backend/tests/test_iteration3.py",
+    "/app/backend/tests/test_messages.py",
+    "/app/test_reports/pytest/iteration4_results.xml"
+  ],
+  "action_items": [
+    "Backend HIGH: In server.py react_to_message(), derive the client key from request.headers.get('x-forwarded-for') (first comma-separated IP) before falling back to request.client.host. Without this the entire iteration-4 P3 rate-limit feature is non-functional behind the ingress.",
+    "(Optional) After fix, re-run TestReactRateLimit class in /app/backend/tests/test_iteration4.py — it auto-restarts backend between cases to reset in-memory state."
+  ],
+  "critical_code_review_comments": [
+    "server.py _check_rate_limit logic is correct (sliding window, prune, retry-after math) — only the key-derivation step (request.client.host) is wrong for proxied deployments. Standard production fix: use X-Forwarded-For first hop.",
+    "server.py export_messages_csv builds CSV in memory with csv.writer and returns PlainTextResponse with media_type='text/csv; charset=utf-8' and proper Content-Disposition. Header column ordering is deterministic (sorted(ALLOWED_EMOJIS)) — verified all 8 emoji columns plus id/nickname/message/timestamp/total_reactions present.",
+    "ArchiveItem.jsx HoverBreakdown computes pct via Math.round(count/total*100); pure CSS :hover on .td-archive-item-wrap reveals .td-archive-popup. opacity transitions to 1 on hover — confirmed via getComputedStyle (=1) after playwright .hover().",
+    "ThemeProvider.jsx applies td-light to body via classList.toggle, persists to localStorage.td_theme, and listens to 'storage' events for cross-tab sync. Cross-page persistence confirmed (toggle on /display → still light on /, toggle on / → still dark on /display).",
+    "Display.jsx Export CSV anchor uses rel='noopener noreferrer' and target='_blank' — good security hygiene.",
+    "Minor: backend rate-limit deque _react_hits grows unboundedly across distinct IPs (no eviction of stale keys). Not a real concern for an event app, but worth a comment/TTL for long-running deployments."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (new) — 3 CSV tests + 2 rate-limit tests; rate-limit tests restart backend to reset in-memory state."
+  ],
+  "success_rate": {
+    "backend": "85% (31/33 — 3/3 CSV + 28/28 iter1-3 regression PASS; 2/2 rate-limit FAIL due to backend bug)",
+    "frontend": "100% (hover popup with/without reactions, export-csv anchor, theme persistence both directions both pages, reset-cancel, logout all PASS)"
+  },
+  "test_credentials": "Display login email=xnytxs@gmail.com password=h6h6h678 — verified working.",
+  "seed_data_creation": "Each backend test purges /api/messages before+after; CSV-with-data test seeds 2 messages (m1 + 3 reactions, m2 + 0). Frontend test seeds TEST_alice + TEST_bob, reacts 🔥🔥❤️ to alice, asserts hover popup percentages 67%/33%, then deletes all on teardown.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run with `pytest backend/tests/test_iteration4.py -v --tb=short -n 0`. The rate-limit tests call `sudo supervisorctl restart backend` and wait ~25s for /api/ readiness — do not parallelise. Confirmed via backend.out.log that ingress source IPs alternate (10.208.128.2 / 10.208.128.6), so the per-IP keying must include X-Forwarded-For to work in this environment. CSV header order is deterministic (sorted) so DictReader access by emoji key is safe. Hover popup is CSS-only; use playwright item.hover() then verify getComputedStyle(popup).opacity == '1' and presence of [data-testid='archive-popup-row-{id}-{emoji}'] for each reacted emoji.",
+  "rca of the issue": "Rate limit bypass — RCA: server.py:203 uses `ip = request.client.host`. Inside the K8s cluster, the FastAPI process sees the TCP peer (ingress NGINX pod) instead of the real client. The ingress is replicated; consecutive requests from one browser/curl session are load-balanced across replicas (observed 10.208.128.2 AND 10.208.128.6 in backend.out.log within one test run). Result: _react_hits has multiple keys for one real client and no single key ever reaches REACT_LIMIT=30. Reproduction: `for i in $(seq 1 31); do curl -s -o /dev/null -w '%{http_code}\\n' -X POST $URL/api/messages/<id>/react -H 'Content-Type: application/json' -d '{\"emoji\":\"🔥\"}'; done` — all 31 return 200 instead of last being 429. Fix: replace `ip = request.client.host if request.client else 'unknown'` with `xff = request.headers.get('x-forwarded-for', ''); ip = (xff.split(',')[0].strip() if xff else (request.client.host if request.client else 'unknown'))`."
+}
